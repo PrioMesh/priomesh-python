@@ -1,43 +1,91 @@
 # PrioMesh
 
-PrioMesh is an in-development Python project for configurable priority and fair-queue scheduling.
+PrioMesh is an early-stage Python library for priority-based task scheduling
+across named sub-queues. It provides pluggable priority and sub-queue policies.
 
-The goal is to let applications choose scheduling policies and storage backends without changing the queue API. The first implementation is for Python; a compatible Go implementation is planned for a later phase.
+The current implementation is an in-memory, single-process prototype. Durable
+storage, workers, and distributed execution are not implemented yet.
 
-> **Status:** Early development. The features below describe project goals and are not yet available unless implemented in the codebase.
+## Requirements
 
-## Goals
+- Python 3.10 or newer
 
-- Schedule work across configurable priority levels.
-- Support named sub-queues with selectable dequeue policies, including FIFO and fairness-oriented policies.
-- Reduce starvation through policies such as aging or weighted scheduling.
-- Keep queue behavior independent from the storage backend.
-- Start with in-memory and Redis backend options.
-- Provide a consistent model and scheduling behavior for future Python and Go implementations.
+## Install
 
-## Planned architecture
+For development from a local checkout:
 
-```text
-Producer
-   │ enqueue
-   ▼
-Priority levels
-   │ select eligible sub-queue
-   ▼
-Sub-queue policy (FIFO / fair scheduling)
-   │ claim next job
-   ▼
-Storage backend (memory / Redis)
-   │
-   ▼
-Worker
+```bash
+git clone https://github.com/PrioMesh/priomesh-python.git
+cd priomesh-python
+python -m pip install -e .
 ```
 
-The exact policy names, delivery guarantees, and backend capabilities will be documented as they are implemented.
+Once the project is published to PyPI, end users will be able to install it
+with:
 
-## Development
+```bash
+python -m pip install priomesh-python
+```
 
-This repository is being initialized. Setup instructions and examples will be added once the first usable implementation is available.
+Until then, users can install directly from the GitHub repository:
+
+```bash
+python -m pip install "git+https://github.com/PrioMesh/priomesh-python.git"
+```
+
+## Quick start
+
+```python
+import asyncio
+
+from priomesh import Job, Priority, PriorityFairQueue
+
+
+async def main() -> None:
+    queue = PriorityFairQueue()
+    await queue.put(Job("job-1", Priority.HIGH, "tenant-a"))
+    await queue.put(Job("job-2", Priority.HIGH, "tenant-b"))
+
+    job = await queue.get()
+    print(job)
+
+
+asyncio.run(main())
+```
+
+The default scheduler randomly chooses among active priority levels, favoring
+higher priorities, then uses aging-weighted random selection among sub-queues
+at the selected level. The current aging policy increases the probability of
+serving a waiting sub-queue but does not guarantee a maximum wait.
+
+Policies can be replaced when constructing the queue:
+
+```python
+from priomesh import (
+    AbsolutePriorityPolicy,
+    FifoSubQueuePolicy,
+    PriorityFairQueue,
+)
+
+queue = PriorityFairQueue(
+    priority_policy=AbsolutePriorityPolicy(),
+    subqueue_policy=FifoSubQueuePolicy(),
+)
+```
+
+## Run the example from a checkout
+
+```bash
+python -m pip install -e .
+python examples/basic.py
+```
+
+## Project status
+
+PrioMesh is under active early development. The current queue is in-memory and
+does not provide persistence, worker execution, retries, or cross-process
+scheduling. A Go implementation is planned after the scheduling semantics
+stabilize.
 
 ## License
 

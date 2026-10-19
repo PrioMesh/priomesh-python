@@ -38,16 +38,25 @@ python -m pip install "git+https://github.com/PrioMesh/priomesh-python.git"
 ```python
 import asyncio
 
-from priomesh import Job, Priority, PriorityFairQueue
+from priomesh import Job, Priority, PriorityFairQueue, QueueShutDown
 
 
 async def main() -> None:
     queue = PriorityFairQueue()
+
+    async def consume() -> None:
+        try:
+            while True:
+                job = await queue.get()
+                print(job)
+        except QueueShutDown:
+            pass
+
+    consumer = asyncio.create_task(consume())
     await queue.put(Job("job-1", Priority.HIGH, "tenant-a"))
     await queue.put(Job("job-2", Priority.HIGH, "tenant-b"))
-
-    job = await queue.get()
-    print(job)
+    await queue.shutdown()
+    await consumer
 
 
 asyncio.run(main())
@@ -57,6 +66,12 @@ asyncio.run(main())
 sub-queue within that level. Jobs within each priority/sub-queue pair are
 returned in FIFO order. Calling `get()` on an empty queue waits until a job is
 put; `empty()` checks whether the queue currently has any jobs.
+
+Call `shutdown()` to stop accepting jobs. It performs a graceful shutdown:
+`put()` raises `QueueShutDown`, while `get()` continues returning jobs that
+were already queued. Once the queue is drained, waiting and future `get()`
+calls raise `QueueShutDown`, allowing consumers to exit. The example above
+shows a consumer draining the queue and stopping cleanly.
 
 ## Scheduling policies
 

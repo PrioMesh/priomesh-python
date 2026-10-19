@@ -8,7 +8,7 @@ from .policies import (
     RandomSubQueuePolicy,
     SubQueuePolicy,
 )
-from .queue import PriorityFairQueue
+from .queue import PriorityFairQueue, QueueShutDown
 
 __all__ = [
     "AbsolutePriorityPolicy",
@@ -17,6 +17,7 @@ __all__ = [
     "Job",
     "Priority",
     "PriorityFairQueue",
+    "QueueShutDown",
     "PriorityPolicy",
     "RandomPriorityPolicy",
     "RandomSubQueuePolicy",

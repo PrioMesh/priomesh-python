@@ -10,6 +10,10 @@ from .policies import (
 )
 
 
+class QueueShutDown(Exception):
+    """Raised when an operation is attempted on a shut-down queue."""
+
+
 class PriorityFairQueue:
     """Schedule jobs by priority and distribute service fairly among subqueues.
 
@@ -28,12 +32,15 @@ class PriorityFairQueue:
         self._queues: dict[Priority, dict[str, deque[Job]]] = {}
         self._rotation: dict[Priority, list[SubQueue]] = {}
         self._condition = asyncio.Condition()
+        self._shutdown = False
 
     def empty(self) -> bool:
         return not self._rotation
 
     async def put(self, job: Job) -> None:
         async with self._condition:
+            if self._shutdown:
+                raise QueueShutDown("cannot put into a shut-down queue")
             level_queues = self._queues.setdefault(job.priority, {})
             level_queues.setdefault(job.subqueue, deque()).append(job)
 
@@ -71,4 +78,11 @@ class PriorityFairQueue:
                     # print(f"Processing job: {job.name}, priority: {job.priority}, subqueue: {job.subqueue}")
                     return job
 
+                if self._shutdown:
+                    raise QueueShutDown("queue is shut down and empty")
                 await self._condition.wait()
+
+    async def shutdown(self) -> None:
+        async with self._condition:
+            self._shutdown = True
+            self._condition.notify_all()  # 唤醒所有等待的协程，促使其检查关闭态并退出

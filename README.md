@@ -20,14 +20,13 @@ cd priomesh-python
 python -m pip install -e .
 ```
 
-Once the project is published to PyPI, end users will be able to install it
-with:
+Install the latest published release from PyPI:
 
 ```bash
 python -m pip install priomesh-python
 ```
 
-Until then, users can install directly from the GitHub repository:
+To install directly from the GitHub repository instead:
 
 ```bash
 python -m pip install "git+https://github.com/PrioMesh/priomesh-python.git"

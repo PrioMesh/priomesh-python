@@ -53,27 +53,56 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-The default scheduler randomly chooses among active priority levels, favoring
-higher priorities, then uses aging-weighted random selection among sub-queues
-at the selected level. A sub-queue's selection weight is
-`sqrt(pending_jobs) * (waiting_rounds + 1)`: deeper queues receive more service
-opportunities, while a queue that is repeatedly skipped gains weight. This is
-probabilistic scheduling, not a strict service ratio or a maximum-wait
-guarantee. Use `FifoSubQueuePolicy` instead when deterministic round-robin
-service among active sub-queues is preferred.
+`get()` first selects an active priority level, then selects an active
+sub-queue within that level. Jobs within each priority/sub-queue pair are
+returned in FIFO order. Calling `get()` on an empty queue waits until a job is
+put; `empty()` checks whether the queue currently has any jobs.
+
+## Scheduling policies
+
+Priority and sub-queue policies are independent and can be combined:
+
+| Policy | Behavior | Use when |
+| --- | --- | --- |
+| `RandomPriorityPolicy` (default) | Randomly selects an active priority, weighting higher priorities more heavily. With all four levels active, the weights are 4:3:2:1 from `CRITICAL` to `LOW`. | Higher priorities should usually run sooner, while lower priorities should still be eligible. |
+| `AbsolutePriorityPolicy` | Always selects the highest-priority active level. | Priority order must be strict. A continuously active higher priority can indefinitely delay lower priorities. |
+| `AgingWeightedRandomSubQueuePolicy` (default) | Randomly selects a sub-queue with weight `sqrt(pending_jobs) * (waiting_rounds + 1)`. | Larger backlogs should receive more opportunities, while sub-queues skipped in prior selections gain weight. |
+| `FifoSubQueuePolicy` | Selects the sub-queue at the front of the rotation; a sub-queue with remaining work goes to the back after serving one job. | Predictable round-robin service among active sub-queues at the selected priority is preferred. |
+| `RandomSubQueuePolicy` | Selects uniformly at random among active sub-queues. | Sub-queues should have equal selection probability, regardless of backlog. |
+
+The aging policy is probabilistic: its weights affect relative selection
+chances, but it does not guarantee a fixed service ratio or a maximum wait.
+`waiting_rounds` counts selections of other sub-queues at the same priority,
+not elapsed time. When a sub-queue is selected, its waiting count resets.
 
 Policies can be replaced when constructing the queue:
 
 ```python
 from priomesh import (
     AbsolutePriorityPolicy,
+    AgingWeightedRandomSubQueuePolicy,
     FifoSubQueuePolicy,
     PriorityFairQueue,
+    RandomPriorityPolicy,
+    RandomSubQueuePolicy,
 )
 
+# Strict priority order, with deterministic round-robin among sub-queues.
 queue = PriorityFairQueue(
     priority_policy=AbsolutePriorityPolicy(),
     subqueue_policy=FifoSubQueuePolicy(),
+)
+
+# Probabilistic priority and uniform random sub-queue selection.
+queue = PriorityFairQueue(
+    priority_policy=RandomPriorityPolicy(),
+    subqueue_policy=RandomSubQueuePolicy(),
+)
+
+# These are also the defaults; this is equivalent to PriorityFairQueue().
+queue = PriorityFairQueue(
+    priority_policy=RandomPriorityPolicy(),
+    subqueue_policy=AgingWeightedRandomSubQueuePolicy(),
 )
 ```
 

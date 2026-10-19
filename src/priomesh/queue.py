@@ -29,14 +29,23 @@ class PriorityFairQueue:
         self._rotation: dict[Priority, list[SubQueue]] = {}
         self._condition = asyncio.Condition()
 
+    def empty(self) -> bool:
+        return not self._rotation
+
     async def put(self, job: Job) -> None:
         async with self._condition:
             level_queues = self._queues.setdefault(job.priority, {})
             level_queues.setdefault(job.subqueue, deque()).append(job)
 
             rotation = self._rotation.setdefault(job.priority, [])
-            if not any(entry.name == job.subqueue for entry in rotation):
+            subqueue = next(
+                (entry for entry in rotation if entry.name == job.subqueue),
+                None,
+            )
+            if subqueue is None:
                 rotation.append(SubQueue(name=job.subqueue, waiting_rounds=0))
+            else:
+                subqueue.pending_jobs += 1
             self._condition.notify()
 
     async def get(self) -> Job:
@@ -51,6 +60,7 @@ class PriorityFairQueue:
                     r.remove(subqueue)
                     jobs = self._queues[priority][subqueue.name]
                     job = jobs.popleft()
+                    subqueue.pending_jobs -= 1
                     if jobs:
                         r.append(subqueue)
                     else:

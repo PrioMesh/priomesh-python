@@ -55,8 +55,12 @@ asyncio.run(main())
 
 The default scheduler randomly chooses among active priority levels, favoring
 higher priorities, then uses aging-weighted random selection among sub-queues
-at the selected level. The current aging policy increases the probability of
-serving a waiting sub-queue but does not guarantee a maximum wait.
+at the selected level. A sub-queue's selection weight is
+`sqrt(pending_jobs) * (waiting_rounds + 1)`: deeper queues receive more service
+opportunities, while a queue that is repeatedly skipped gains weight. This is
+probabilistic scheduling, not a strict service ratio or a maximum-wait
+guarantee. Use `FifoSubQueuePolicy` instead when deterministic round-robin
+service among active sub-queues is preferred.
 
 Policies can be replaced when constructing the queue:
 

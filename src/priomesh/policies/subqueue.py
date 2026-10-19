@@ -1,3 +1,4 @@
+import math
 import random
 from collections.abc import Sequence
 from typing import Protocol
@@ -10,13 +11,24 @@ class SubQueuePolicy(Protocol):
 
 
 class AgingWeightedRandomSubQueuePolicy:
-    """Favor subqueues that have waited through more scheduling rounds."""
+    """Favor larger backlogs while increasing chances for waiting subqueues.
+
+    Each active subqueue's weight is sqrt(pending jobs) * (waiting rounds + 1).
+    The square root gives deeper queues more service opportunities without
+    making a small queue's chance negligible. Aging raises the weight of a
+    subqueue each time it is not selected and resets it when it is selected.
+    Selection remains probabilistic; this policy does not impose a wait limit.
+    """
 
     def choose(self, subqueues: Sequence[SubQueue]) -> SubQueue:
+        weights = [
+            math.sqrt(subqueue.pending_jobs) * (subqueue.waiting_rounds + 1)
+            for subqueue in subqueues
+        ]
         selected = random.choices(
             subqueues,
-            weights=[subqueue.waiting_rounds + 1 for subqueue in subqueues],
-            k=1
+            weights=weights,
+            k=1,
         )[0]
         for subqueue in subqueues:
             if subqueue is selected:

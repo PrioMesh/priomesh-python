@@ -14,10 +14,11 @@ class Priority(IntEnum):
 class Job:
     name: str
     priority: Priority
-    subqueue: str
+    subqueue: str = "default"
 
 
 @dataclass(frozen=False)
 class SubQueue:
     name: str
     waiting_rounds: int
+    pending_jobs: int = 1

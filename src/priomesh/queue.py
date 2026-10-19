@@ -1,4 +1,5 @@
 import asyncio
+import math
 from collections import deque
 from .models import Priority, SubQueue, Job
 
@@ -12,6 +13,11 @@ from .policies import (
 
 class QueueShutDown(Exception):
     """Raised when an operation is attempted on a shut-down queue."""
+
+
+def _validate_timeout(timeout: float | None) -> None:
+    if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
+        raise ValueError("timeout must be a finite positive number or None")
 
 
 class PriorityFairQueue:
@@ -43,7 +49,14 @@ class PriorityFairQueue:
     def empty(self) -> bool:
         return not self._rotation
 
-    async def put(self, job: Job) -> None:
+    async def put(self, job: Job, timeout: float | None = None) -> None:
+        _validate_timeout(timeout)
+        if timeout is None:
+            await self._put(job)
+        else:
+            await asyncio.wait_for(self._put(job), timeout=timeout)
+
+    async def _put(self, job: Job) -> None:
         async with self._condition:
             while self._maxsize > 0 and self._size >= self._maxsize:
                 if self._shutdown:
@@ -67,7 +80,13 @@ class PriorityFairQueue:
             self._size += 1
             self._condition.notify()
 
-    async def get(self) -> Job:
+    async def get(self, timeout: float | None = None) -> Job:
+        _validate_timeout(timeout)
+        if timeout is None:
+            return await self._get()
+        return await asyncio.wait_for(self._get(), timeout=timeout)
+
+    async def _get(self) -> Job:
         async with self._condition:
             while True:
                 active_priorities = [p for p, r in self._rotation.items() if r]
@@ -100,3 +119,9 @@ class PriorityFairQueue:
         async with self._condition:
             self._shutdown = True
             self._condition.notify_all()  # 唤醒所有等待的协程，促使其检查关闭态并退出
+
+    def qsize(self) -> int:
+        return self._size
+
+    def full(self) -> bool:
+        return self._maxsize > 0 and self._size >= self._maxsize

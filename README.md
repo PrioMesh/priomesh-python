@@ -80,6 +80,41 @@ because the queue is full is also woken by shutdown and raises
 `QueueShutDown`. The example above shows a consumer draining the queue and
 stopping cleanly.
 
+`put()` and `get()` accept an optional `timeout` in seconds. The default
+`None` waits without a deadline; otherwise the timeout must be a finite
+positive number. Zero, negative, `NaN`, and infinite timeout values raise
+`ValueError`. The timeout is implemented with
+`asyncio.wait_for()`, so an expired timeout raises `asyncio.TimeoutError`
+(`TimeoutError` on Python 3.11 and newer). Cancelling the task awaiting either
+operation also cancels the operation. If the operation is cancelled while
+waiting for a job or for queue capacity, it does not remove or add a job.
+
+```python
+import asyncio
+from priomesh import Job, Priority, PriorityFairQueue
+
+async def main() -> None:
+    queue = PriorityFairQueue()
+    try:
+        await queue.get(timeout=1.0)
+    except asyncio.TimeoutError:
+        print("No job arrived before the timeout")
+
+    bounded_queue = PriorityFairQueue(maxsize=1)
+    await bounded_queue.put(Job("queued", Priority.NORMAL))
+    try:
+        await bounded_queue.put(Job("waiting", Priority.NORMAL), timeout=1.0)
+    except asyncio.TimeoutError:
+        print("No capacity became available before the timeout")
+
+
+asyncio.run(main())
+```
+
+For manual cancellation, create a task for `put()` or `get()` and call its
+`cancel()` method. Timeout and cancellation handling use `asyncio`; they do
+not use a separate queue-specific cancellation API.
+
 ## Scheduling policies
 
 Priority and sub-queue policies are independent and can be combined:

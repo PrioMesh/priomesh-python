@@ -1,4 +1,5 @@
 import asyncio
+import math
 import unittest
 
 from priomesh import Job, Priority, PriorityFairQueue, QueueShutDown
@@ -215,8 +216,40 @@ class PriorityFairQueueTests(unittest.IsolatedAsyncioTestCase):
         queue = PriorityFairQueue(maxsize=0)
         for i in range(10):
             await queue.put(Job(f"job-{i}", Priority.NORMAL))
-        while queue.empty():
+        self.assertEqual(queue.qsize(), 10)
+        self.assertFalse(queue.full())
+        while not queue.empty():
             await queue.get()
+        self.assertEqual(queue.qsize(), 0)
+
+    async def test_qsize_and_full_track_jobs(self) -> None:
+        queue = PriorityFairQueue(maxsize=2)
+
+        self.assertEqual(queue.qsize(), 0)
+        self.assertFalse(queue.full())
+
+        await queue.put(Job("job-1", Priority.NORMAL, "tenant-a"))
+        self.assertEqual(queue.qsize(), 1)
+        self.assertFalse(queue.full())
+
+        await queue.put(Job("job-2", Priority.HIGH, "tenant-b"))
+        self.assertEqual(queue.qsize(), 2)
+        self.assertTrue(queue.full())
+
+        await queue.get()
+        self.assertEqual(queue.qsize(), 1)
+        self.assertFalse(queue.full())
+
+        await queue.get()
+        self.assertEqual(queue.qsize(), 0)
+        self.assertFalse(queue.full())
+
+    async def test_full_is_false_for_unbounded_queue(self) -> None:
+        queue = PriorityFairQueue()
+        await queue.put(Job("job-1", Priority.NORMAL))
+
+        self.assertEqual(queue.qsize(), 1)
+        self.assertFalse(queue.full())
 
     async def test_maxsize_1(self) -> None:
         queue = PriorityFairQueue(maxsize=1)
@@ -252,6 +285,90 @@ class PriorityFairQueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await queue.get()).name, "job-1")
         with self.assertRaises(QueueShutDown):
             await queue.get()
+
+    async def test_get_times_out_when_queue_is_empty(self) -> None:
+        queue = PriorityFairQueue()
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await queue.get(timeout=0.01)
+
+        self.assertTrue(queue.empty())
+        self.assertEqual(queue.qsize(), 0)
+
+        job = Job("job-1", Priority.NORMAL)
+        await queue.put(job)
+        self.assertEqual(await queue.get(), job)
+
+    async def test_put_times_out_when_queue_is_full(self) -> None:
+        queue = PriorityFairQueue(maxsize=1)
+        first_job = Job("job-1", Priority.NORMAL)
+        await queue.put(first_job)
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await queue.put(Job("job-2", Priority.NORMAL), timeout=0.01)
+
+        self.assertEqual(queue.qsize(), 1)
+        self.assertTrue(queue.full())
+        self.assertEqual(await queue.get(), first_job)
+
+    async def test_cancelled_get_does_not_remove_jobs(self) -> None:
+        queue = PriorityFairQueue()
+        get_task = asyncio.create_task(queue.get())
+        await asyncio.sleep(0)
+        self.assertFalse(get_task.done())
+
+        get_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await get_task
+
+        job = Job("job-1", Priority.NORMAL)
+        await queue.put(job)
+        self.assertEqual(queue.qsize(), 1)
+        self.assertEqual(await queue.get(), job)
+
+    async def test_cancelled_put_does_not_enqueue_job(self) -> None:
+        queue = PriorityFairQueue(maxsize=1)
+        first_job = Job("job-1", Priority.NORMAL)
+        await queue.put(first_job)
+
+        put_task = asyncio.create_task(
+            queue.put(Job("job-2", Priority.NORMAL))
+        )
+        await asyncio.sleep(0)
+        self.assertFalse(put_task.done())
+
+        put_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await put_task
+
+        self.assertEqual(queue.qsize(), 1)
+        self.assertTrue(queue.full())
+        self.assertEqual(await queue.get(), first_job)
+
+    async def test_put_rejects_invalid_timeouts(self) -> None:
+        queue = PriorityFairQueue()
+        job = Job("job-1", Priority.NORMAL)
+
+        for timeout in (0, -1, math.inf, -math.inf, math.nan):
+            with self.subTest(timeout=timeout):
+                with self.assertRaises(ValueError):
+                    await queue.put(job, timeout=timeout)
+
+        self.assertTrue(queue.empty())
+        self.assertEqual(queue.qsize(), 0)
+
+    async def test_get_rejects_invalid_timeouts_without_consuming_jobs(self) -> None:
+        queue = PriorityFairQueue()
+        job = Job("job-1", Priority.NORMAL)
+        await queue.put(job)
+
+        for timeout in (0, -1, math.inf, -math.inf, math.nan):
+            with self.subTest(timeout=timeout):
+                with self.assertRaises(ValueError):
+                    await queue.get(timeout=timeout)
+
+        self.assertEqual(queue.qsize(), 1)
+        self.assertEqual(await queue.get(), job)
 
 if __name__ == "__main__":
     """

@@ -207,6 +207,52 @@ class PriorityFairQueueTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(QueueShutDown):
                 await asyncio.wait_for(t, timeout=1)
 
+    async def test_maxsize_neg(self) -> None:
+        with self.assertRaises(ValueError):
+            PriorityFairQueue(maxsize=-1)
+
+    async def test_maxsize_zero(self) -> None:
+        queue = PriorityFairQueue(maxsize=0)
+        for i in range(10):
+            await queue.put(Job(f"job-{i}", Priority.NORMAL))
+        while queue.empty():
+            await queue.get()
+
+    async def test_maxsize_1(self) -> None:
+        queue = PriorityFairQueue(maxsize=1)
+        await queue.put(Job("job-1", Priority.NORMAL))
+
+        t = asyncio.create_task(
+            queue.put(Job("job-2", Priority.NORMAL))
+        )
+        await asyncio.sleep(0)
+        self.assertFalse(t.done())
+        await queue.get()
+
+        await asyncio.wait_for(t, timeout=1)
+        await queue.get()
+        self.assertTrue(t.done())
+        self.assertTrue(queue.empty())
+
+    async def test_shutdown_wakes_put_waiting_on_full_queue(self) -> None:
+        queue = PriorityFairQueue(maxsize=1)
+        await queue.put(Job("job-1", Priority.NORMAL))
+
+        put_task = asyncio.create_task(
+            queue.put(Job("job-2", Priority.NORMAL))
+        )
+        await asyncio.sleep(0)
+        self.assertFalse(put_task.done())
+
+        await queue.shutdown()
+
+        with self.assertRaises(QueueShutDown):
+            await asyncio.wait_for(put_task, timeout=1)
+
+        self.assertEqual((await queue.get()).name, "job-1")
+        with self.assertRaises(QueueShutDown):
+            await queue.get()
+
 if __name__ == "__main__":
     """
     python -m pip install .

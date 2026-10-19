@@ -67,11 +67,18 @@ sub-queue within that level. Jobs within each priority/sub-queue pair are
 returned in FIFO order. Calling `get()` on an empty queue waits until a job is
 put; `empty()` checks whether the queue currently has any jobs.
 
+By default, the queue is unbounded. Pass a positive `maxsize` to limit the
+number of jobs waiting in the queue across all priorities and sub-queues.
+When it is full, `put()` waits until a `get()` removes a job and frees a slot.
+`maxsize=0` keeps the queue unbounded; negative values raise `ValueError`.
+
 Call `shutdown()` to stop accepting jobs. It performs a graceful shutdown:
 `put()` raises `QueueShutDown`, while `get()` continues returning jobs that
 were already queued. Once the queue is drained, waiting and future `get()`
-calls raise `QueueShutDown`, allowing consumers to exit. The example above
-shows a consumer draining the queue and stopping cleanly.
+calls raise `QueueShutDown`, allowing consumers to exit. A `put()` waiting
+because the queue is full is also woken by shutdown and raises
+`QueueShutDown`. The example above shows a consumer draining the queue and
+stopping cleanly.
 
 ## Scheduling policies
 

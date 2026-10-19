@@ -26,6 +26,7 @@ class PriorityFairQueue:
         self,
         priority_policy: PriorityPolicy | None = None,
         subqueue_policy: SubQueuePolicy | None = None,
+        maxsize: int = 0,
     ) -> None:
         self._priority_policy = priority_policy or RandomPriorityPolicy()
         self._subqueue_policy = subqueue_policy or AgingWeightedRandomSubQueuePolicy()
@@ -34,11 +35,21 @@ class PriorityFairQueue:
         self._condition = asyncio.Condition()
         self._shutdown = False
 
+        if maxsize < 0:
+            raise ValueError("maxsize must be non-negative")
+        self._maxsize = maxsize
+        self._size = 0
+
     def empty(self) -> bool:
         return not self._rotation
 
     async def put(self, job: Job) -> None:
         async with self._condition:
+            while self._maxsize > 0 and self._size >= self._maxsize:
+                if self._shutdown:
+                    raise QueueShutDown("cannot put into a shut-down queue")
+                await self._condition.wait()
+
             if self._shutdown:
                 raise QueueShutDown("cannot put into a shut-down queue")
             level_queues = self._queues.setdefault(job.priority, {})
@@ -53,6 +64,7 @@ class PriorityFairQueue:
                 rotation.append(SubQueue(name=job.subqueue, waiting_rounds=0))
             else:
                 subqueue.pending_jobs += 1
+            self._size += 1
             self._condition.notify()
 
     async def get(self) -> Job:
@@ -67,6 +79,8 @@ class PriorityFairQueue:
                     r.remove(subqueue)
                     jobs = self._queues[priority][subqueue.name]
                     job = jobs.popleft()
+                    self._size -= 1
+                    self._condition.notify_all()
                     subqueue.pending_jobs -= 1
                     if jobs:
                         r.append(subqueue)

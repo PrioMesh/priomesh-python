@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 
-from priomesh import Job, Priority, PriorityFairQueue
+from priomesh import Job, Priority, PriorityFairQueue, QueueShutDown
 from priomesh.policies import FifoSubQueuePolicy
 from priomesh.policies import AbsolutePriorityPolicy
 
@@ -159,6 +159,53 @@ class PriorityFairQueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertCountEqual(received_names, expected_names)
         self.assertTrue(queue.empty())
 
+    async def test_get_from_shutdown_queue(self) -> None:
+        queue = PriorityFairQueue()
+        await queue.put(Job("job-1", Priority.NORMAL))
+        await queue.put(Job("job-2", Priority.NORMAL))
+        await queue.put(Job("job-3", Priority.NORMAL))
+
+        await queue.shutdown()
+
+        self.assertEqual((await queue.get()).name, "job-1")
+        self.assertEqual((await queue.get()).name, "job-2")
+        self.assertEqual((await queue.get()).name, "job-3")
+        with self.assertRaises(QueueShutDown):
+            await queue.get()
+
+    async def test_put_to_shutdown_queue(self) -> None:
+        queue = PriorityFairQueue()
+        await queue.shutdown()
+
+        with self.assertRaises(QueueShutDown):
+            await queue.put(Job("job-1", Priority.NORMAL))
+
+    async def test_wait_waiter(self) -> None:
+        queue = PriorityFairQueue()
+
+        task = asyncio.create_task(queue.get())
+        await asyncio.sleep(0.01)
+        self.assertFalse(task.done())
+
+        await queue.shutdown()
+        with self.assertRaises(QueueShutDown):
+            await asyncio.wait_for(task, timeout=1)
+
+    async def test_wait_mul_waiters(self) -> None:
+        queue = PriorityFairQueue()
+
+        task1 = asyncio.create_task(queue.get())
+        task2 = asyncio.create_task(queue.get())
+        task3 = asyncio.create_task(queue.get())
+        await asyncio.sleep(0.01)
+        self.assertFalse(task1.done())
+        self.assertFalse(task2.done())
+        self.assertFalse(task3.done())
+
+        await queue.shutdown()
+        for t in (task1, task2, task3):
+            with self.assertRaises(QueueShutDown):
+                await asyncio.wait_for(t, timeout=1)
 
 if __name__ == "__main__":
     """

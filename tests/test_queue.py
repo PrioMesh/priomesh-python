@@ -181,6 +181,8 @@ class PriorityFairQueueTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(QueueShutDown):
             await queue.put(Job("job-1", Priority.NORMAL))
 
+        await asyncio.wait_for(queue.join(), timeout=1)
+
     async def test_wait_waiter(self) -> None:
         queue = PriorityFairQueue()
 
@@ -283,6 +285,8 @@ class PriorityFairQueueTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(put_task, timeout=1)
 
         self.assertEqual((await queue.get()).name, "job-1")
+        queue.task_done()
+        await asyncio.wait_for(queue.join(), timeout=1)
         with self.assertRaises(QueueShutDown):
             await queue.get()
 
@@ -294,6 +298,7 @@ class PriorityFairQueueTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(queue.empty())
         self.assertEqual(queue.qsize(), 0)
+        await asyncio.wait_for(queue.join(), timeout=1)
 
         job = Job("job-1", Priority.NORMAL)
         await queue.put(job)
@@ -310,6 +315,8 @@ class PriorityFairQueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(queue.qsize(), 1)
         self.assertTrue(queue.full())
         self.assertEqual(await queue.get(), first_job)
+        queue.task_done()
+        await asyncio.wait_for(queue.join(), timeout=1)
 
     async def test_cancelled_get_does_not_remove_jobs(self) -> None:
         queue = PriorityFairQueue()
@@ -344,6 +351,8 @@ class PriorityFairQueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(queue.qsize(), 1)
         self.assertTrue(queue.full())
         self.assertEqual(await queue.get(), first_job)
+        queue.task_done()
+        await asyncio.wait_for(queue.join(), timeout=1)
 
     async def test_put_rejects_invalid_timeouts(self) -> None:
         queue = PriorityFairQueue()
@@ -369,6 +378,98 @@ class PriorityFairQueueTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(queue.qsize(), 1)
         self.assertEqual(await queue.get(), job)
+
+    async def test_empty_queue_join(self) -> None:
+        queue = PriorityFairQueue()
+        await queue.join()
+
+    async def test_task_unfinished_join(self) -> None:
+        queue = PriorityFairQueue()
+        job = Job("job-1", Priority.NORMAL)
+        await queue.put(job)
+
+        join_task = asyncio.create_task(queue.join())
+        await asyncio.sleep(0)
+        self.assertFalse(join_task.done())
+
+        await queue.get()
+        await asyncio.sleep(0)
+        self.assertFalse(join_task.done())
+
+        queue.task_done()
+        await asyncio.wait_for(join_task, timeout=1)
+
+    async def test_join_waits_until_every_task_is_done(self) -> None:
+        queue = PriorityFairQueue()
+        job1 = Job("job-1", Priority.NORMAL)
+        job2 = Job("job-2", Priority.NORMAL)
+        await queue.put(job1)
+        await queue.put(job2)
+
+        join_tasks = [
+            asyncio.create_task(queue.join())
+            for _ in range(2)
+        ]
+        await asyncio.sleep(0)
+        self.assertTrue(all(not task.done() for task in join_tasks))
+
+        await queue.get()
+        queue.task_done()
+        await asyncio.sleep(0)
+        self.assertTrue(all(not task.done() for task in join_tasks))
+
+        await queue.get()
+        queue.task_done()
+        await asyncio.wait_for(asyncio.gather(*join_tasks), timeout=1)
+
+    async def test_join_waits_for_in_flight_task_after_shutdown(self) -> None:
+        queue = PriorityFairQueue()
+        await queue.put(Job("job-1", Priority.NORMAL))
+        await queue.shutdown()
+
+        job = await queue.get()
+        self.assertEqual(job.name, "job-1")
+        with self.assertRaises(QueueShutDown):
+            await queue.get()
+
+        join_task = asyncio.create_task(queue.join())
+        await asyncio.sleep(0)
+        self.assertFalse(join_task.done())
+
+        queue.task_done()
+        await asyncio.wait_for(join_task, timeout=1)
+
+    async def test_task_unfinished_err(self) -> None:
+        queue = PriorityFairQueue()
+        await queue.put(Job("job-1", Priority.NORMAL))
+        await queue.get()
+        queue.task_done()
+        with self.assertRaises(ValueError):
+            queue.task_done()
+
+    async def test_get_after_shutdown(self) -> None:
+        queue = PriorityFairQueue()
+        await queue.put(Job("job-1", Priority.NORMAL))
+        await queue.shutdown()
+        job = await queue.get()
+        self.assertEqual(job.name, "job-1")
+
+    async def test_task_concurrent(self) -> None:
+        queue = PriorityFairQueue()
+        await queue.put(Job("job-1", Priority.NORMAL))
+        join_task = asyncio.create_task(queue.join())
+        await asyncio.sleep(0)
+        self.assertFalse(join_task.done())
+        await queue.get()
+        queue.task_done()
+
+        await queue.put(Job("job-2", Priority.NORMAL))
+        await asyncio.sleep(0)
+        self.assertFalse(join_task.done())
+
+        await queue.get()
+        queue.task_done()
+        await asyncio.wait_for(join_task, timeout=1)
 
 if __name__ == "__main__":
     """

@@ -45,6 +45,9 @@ class PriorityFairQueue:
             raise ValueError("maxsize must be non-negative")
         self._maxsize = maxsize
         self._size = 0
+        self._unfinished_tasks = 0
+        self._finished = asyncio.Event()
+        self._finished.set()
 
     def empty(self) -> bool:
         return not self._rotation
@@ -78,6 +81,8 @@ class PriorityFairQueue:
             else:
                 subqueue.pending_jobs += 1
             self._size += 1
+            self._unfinished_tasks += 1
+            self._finished.clear()
             self._condition.notify()
 
     async def get(self, timeout: float | None = None) -> Job:
@@ -120,8 +125,38 @@ class PriorityFairQueue:
             self._shutdown = True
             self._condition.notify_all()  # 唤醒所有等待的协程，促使其检查关闭态并退出
 
-    def qsize(self) -> int:
-        return self._size
+    def qsize(
+        self,
+        priority: Priority | None = None,
+        subqueue: str | None = None,
+    ) -> int:
+        if priority is None and subqueue is None:
+            return self._size
+        size = 0
+        for p in self._queues:
+            if priority is not None and p != priority:
+                continue
+            queues = self._queues[p]
+            for sq, queue in queues.items():
+                if subqueue is not None and subqueue != sq:
+                    continue
+                size += len(queue)
+        return size
 
     def full(self) -> bool:
         return self._maxsize > 0 and self._size >= self._maxsize
+
+    def task_done(self) -> None:
+        if self._unfinished_tasks <= 0:
+            raise ValueError("task_done() called too many times")
+        self._unfinished_tasks -= 1
+        if self._unfinished_tasks == 0:
+            self._finished.set()
+
+    async def join(self) -> None:
+        while self._unfinished_tasks:
+            await self._finished.wait()
+
+    @property
+    def unfinished_tasks(self) -> int:
+        return self._unfinished_tasks
